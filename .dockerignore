@@ -1,0 +1,16 @@
+node_modules
+dist
+coverage
+tests
+.git
+.github
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+README.md
+eslint.config.js
+vitest.config.ts
+.prettierrc
+.prettierignore
