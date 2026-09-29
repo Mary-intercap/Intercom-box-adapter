@@ -25,6 +25,11 @@ export const TRIAGE_CATEGORIES = [
   "security",
   "abuse",
   "general",
+  // Not actually customer support. Kept as categories rather than a separate
+  // flag because "this is vendor noise" fully determines the topic - unlike,
+  // say, information-completeness, which is orthogonal to it.
+  "not_support",
+  "misdirected",
   "other",
 ] as const;
 

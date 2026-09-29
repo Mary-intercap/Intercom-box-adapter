@@ -138,7 +138,7 @@ export function createIntercomWebhookHandler(deps: WebhookDeps) {
     await deps.defer(() =>
       processSupportRequest(request, {
         triage: deps.triage,
-        slack: deps.slack,
+        sink: deps.sink,
         logger: deps.logger,
       }),
     );

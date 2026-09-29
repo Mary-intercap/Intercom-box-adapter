@@ -10,7 +10,7 @@ import { z } from "zod";
  */
 
 export const LOG_LEVELS = ["debug", "info", "warn", "error"] as const;
-export const AI_PROVIDERS = ["anthropic", "noop"] as const;
+export const AI_PROVIDERS = ["anthropic", "mock", "noop"] as const;
 export const AI_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 
 const booleanish = z
@@ -27,8 +27,14 @@ const envSchema = z.object({
   // Intercom app only holds "Read conversations". Reserved for V2.
   INTERCOM_ACCESS_TOKEN: z.string().min(1).optional(),
 
-  SLACK_WEBHOOK_URL: z.url("must be a valid URL"),
+  // Optional: the dashboard is the default sink. Set this only if you also want
+  // notifications posted to Slack.
+  SLACK_WEBHOOK_URL: z.url("must be a valid URL").optional(),
   SLACK_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60_000).default(10_000),
+
+  /** Shared secret gating the dashboard. Unset = open, which is fine on localhost. */
+  DASHBOARD_TOKEN: z.string().min(16, "must be at least 16 characters").optional(),
+  DASHBOARD_MAX_RECORDS: z.coerce.number().int().min(1).max(10_000).default(200),
 
   AI_PROVIDER: z.enum(AI_PROVIDERS).default("anthropic"),
   AI_API_KEY: z.string().min(1).optional(),
@@ -90,6 +96,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     add("AI_API_KEY", "is required when AI_PROVIDER=anthropic");
   }
 
+  // Slack is optional, but if a URL is given it has to be a plausible one.
   const slackUrl = cleaned.SLACK_WEBHOOK_URL;
   if (slackUrl !== undefined && !flagged.has("SLACK_WEBHOOK_URL")) {
     const allowNonSlack =

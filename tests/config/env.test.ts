@@ -88,8 +88,32 @@ describe("loadConfig", () => {
 
     expect(error).toBeInstanceOf(ConfigError);
     expect(error?.problems.join("\n")).toContain("INTERCOM_CLIENT_SECRET");
-    expect(error?.problems.join("\n")).toContain("SLACK_WEBHOOK_URL");
     expect(error?.problems.join("\n")).toContain("AI_API_KEY");
+  });
+
+  it("treats Slack as optional - the dashboard is the default sink", () => {
+    const { SLACK_WEBHOOK_URL: _omitted, ...rest } = MINIMAL;
+    const config = loadConfig(rest);
+    expect(config.SLACK_WEBHOOK_URL).toBeUndefined();
+  });
+
+  it("still validates a Slack URL when one is supplied", () => {
+    expect(() =>
+      loadConfig({ ...MINIMAL, SLACK_WEBHOOK_URL: "https://evil.example/hook" }),
+    ).toThrow(/SLACK_WEBHOOK_URL/);
+  });
+
+  it("leaves the dashboard open by default and bounds its history", () => {
+    const config = loadConfig(MINIMAL);
+    expect(config.DASHBOARD_TOKEN).toBeUndefined();
+    expect(config.DASHBOARD_MAX_RECORDS).toBe(200);
+  });
+
+  it("rejects a dashboard token that is too short to be worth having", () => {
+    expect(() => loadConfig({ ...MINIMAL, DASHBOARD_TOKEN: "short" })).toThrow(/DASHBOARD_TOKEN/);
+    expect(() =>
+      loadConfig({ ...MINIMAL, DASHBOARD_TOKEN: "a-sufficiently-long-token" }),
+    ).not.toThrow();
   });
 
   it("never includes a secret value in the error message", () => {

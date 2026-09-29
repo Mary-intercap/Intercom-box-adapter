@@ -34,8 +34,10 @@ export default tseslint.config(
     },
   },
   {
-    // The logger is the one place allowed to write to stdout/stderr.
-    files: ["src/utils/logger.ts"],
+    // The logger is the one place in the service allowed to write to
+    // stdout/stderr; the dev scripts in scripts/ are CLI tools whose whole job
+    // is printing.
+    files: ["src/utils/logger.ts", "scripts/**/*.ts"],
     rules: { "no-console": "off" },
   },
   {

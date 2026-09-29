@@ -8,16 +8,19 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch --env-file-if-exists=.env src/index.ts",
     "build": "tsc -p tsconfig.build.json",
-    "start": "node dist/index.js",
+    "start": "node --env-file-if-exists=.env dist/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "inspect": "tsx scripts/inspect-payload.ts",
+    "replay": "tsx --env-file-if-exists=.env scripts/replay.ts",
+    "seed": "tsx --env-file-if-exists=.env scripts/seed.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.128.0",

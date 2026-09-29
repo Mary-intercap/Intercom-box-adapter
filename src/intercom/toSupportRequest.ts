@@ -16,6 +16,9 @@ import type { SupportedTopic } from "./parseEvent.js";
  */
 const CUSTOMER_AUTHOR_TYPES = new Set(["user", "lead", "contact", "visitor"]);
 
+/** Author types that represent .box rather than the customer. */
+const TEAM_AUTHOR_TYPES = new Set(["admin", "bot", "team"]);
+
 /** Parts that carry customer-authored text. `note`/`assignment` etc. do not. */
 const MESSAGE_PART_TYPES = new Set(["comment", "message", "conversation_part"]);
 
@@ -47,6 +50,30 @@ function pickLatestCustomerPart(
   return candidates.reduce((newest, current) =>
     (current.created_at ?? 0) >= (newest.created_at ?? 0) ? current : newest,
   );
+}
+
+/**
+ * When a teammate last replied. Used for sorting - "nobody has answered this
+ * yet" is the state worth surfacing, so an absent value is meaningful.
+ */
+function pickLastResponseAt(parts: readonly IntercomConversationPart[]): string | undefined {
+  let newest: number | undefined;
+  for (const part of parts) {
+    const authorType = part.author?.type?.toLowerCase();
+    if (authorType === undefined || !TEAM_AUTHOR_TYPES.has(authorType)) continue;
+    // A note or assignment is internal bookkeeping, not a response.
+    if (
+      part.part_type !== null &&
+      part.part_type !== undefined &&
+      !MESSAGE_PART_TYPES.has(part.part_type.toLowerCase())
+    ) {
+      continue;
+    }
+    if (typeof part.body !== "string" || stripHtml(part.body).length === 0) continue;
+    if (typeof part.created_at !== "number") continue;
+    if (newest === undefined || part.created_at > newest) newest = part.created_at;
+  }
+  return unixSecondsToIso(newest);
 }
 
 function pickCustomer(
@@ -129,6 +156,10 @@ export function toSupportRequest(
   const customer = pickCustomer(conversation, latestCustomerPart);
   if (customer) request.customer = customer;
   if (createdAt) request.createdAt = createdAt;
+  const conversationCreatedAt = unixSecondsToIso(conversation.created_at);
+  if (conversationCreatedAt) request.conversationCreatedAt = conversationCreatedAt;
+  const lastResponseAt = pickLastResponseAt(parts);
+  if (lastResponseAt) request.lastResponseAt = lastResponseAt;
   const url = buildIntercomUrl(notification.app_id, conversationId);
   if (url) request.intercomUrl = url;
 

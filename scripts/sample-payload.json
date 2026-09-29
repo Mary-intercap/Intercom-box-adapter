@@ -1,0 +1,34 @@
+{
+  "type": "notification_event",
+  "app_id": "abc12345",
+  "id": "local_test_001",
+  "topic": "conversation.user.created",
+  "created_at": 1700000000,
+  "data": {
+    "type": "notification_event_data",
+    "item": {
+      "type": "conversation",
+      "id": "conv_local_1",
+      "created_at": 1700000000,
+      "updated_at": 1700000000,
+      "source": {
+        "type": "conversation",
+        "id": "msg_local_1",
+        "delivered_as": "customer_initiated",
+        "subject": "",
+        "body": "<p>Hi — my .box domain stopped resolving this morning. I haven't changed any DNS settings. Customers can't reach my site. Can you check what's going on?</p>",
+        "author": {
+          "type": "user",
+          "id": "contact_local_1",
+          "name": "Test Customer",
+          "email": "test-customer@example.com"
+        }
+      },
+      "contacts": {
+        "type": "contact.list",
+        "contacts": [{ "type": "contact", "id": "contact_local_1" }]
+      },
+      "conversation_parts": { "type": "conversation_part.list", "conversation_parts": [] }
+    }
+  }
+}

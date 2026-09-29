@@ -3,12 +3,14 @@
 A small standalone adapter service for .box customer support.
 
 ```
-Intercom  ──webhook──▶  box-support-agent  ──▶  AI triage  ──▶  Slack notification
+Intercom  ──webhook──▶  box-support-agent  ──▶  AI triage  ──▶  dashboard
+                                                              └─▶  Slack (optional)
 ```
 
 It listens for new customer conversations in Intercom, asks Claude to classify
-and summarise them, and posts a notification to a Slack channel so a human can
-prioritise the queue.
+and summarise them, and shows the results on a built-in dashboard so a human can
+scan and prioritise the queue. Slack notifications are available as an optional
+second destination.
 
 **This service is deliberately separate from the main .box application.** It
 holds no shared code, no shared database, and no shared deploy. It is a
@@ -16,14 +18,15 @@ single-purpose event adapter.
 
 ## What V1 does and does not do
 
-|                                                                   |                                                                           |
-| ----------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| ✅ Verifies Intercom webhook signatures                           |                                                                           |
-| ✅ Classifies customer messages with Claude                       | category, priority, action-required, confidence, summary, suggested reply |
-| ✅ Posts a Slack notification for **every** valid support request |                                                                           |
-| ❌ Does **not** reply to customers                                |                                                                           |
-| ❌ Does **not** modify Intercom conversations                     |                                                                           |
-| ❌ Does **not** filter out low-priority requests                  | see [Why nothing is filtered](#why-nothing-is-filtered-in-v1)             |
+|                                                         |                                                                           |
+| ------------------------------------------------------- | ------------------------------------------------------------------------- |
+| ✅ Verifies Intercom webhook signatures                 |                                                                           |
+| ✅ Classifies customer messages with Claude             | category, priority, action-required, confidence, summary, suggested reply |
+| ✅ Shows **every** valid support request on a dashboard | `GET /` — no setup required                                               |
+| ✅ Optionally posts to Slack                            | only when `SLACK_WEBHOOK_URL` is set                                      |
+| ❌ Does **not** reply to customers                      |                                                                           |
+| ❌ Does **not** modify Intercom conversations           |                                                                           |
+| ❌ Does **not** filter out low-priority requests        | see [Why nothing is filtered](#why-nothing-is-filtered-in-v1)             |
 
 The Intercom app this service uses needs exactly one permission: **Read
 conversations**. It never needs write access in V1.
@@ -34,8 +37,10 @@ conversations**. It never needs write access in V1.
 
 - [Quick start](#quick-start)
 - [Configuration](#configuration)
+- [Running with no credentials](#running-with-no-credentials)
+- [The dashboard](#the-dashboard)
 - [Intercom setup](#intercom-setup)
-- [Slack setup](#slack-setup)
+- [Slack setup (optional)](#slack-setup-optional)
 - [AI provider setup](#ai-provider-setup)
 - [Local development](#local-development)
 - [Testing](#testing)
@@ -64,16 +69,32 @@ curl http://localhost:3000/health
 # {"status":"ok"}
 ```
 
-| Script               | What it does                      |
-| -------------------- | --------------------------------- |
-| `npm run dev`        | Run with hot reload (`tsx watch`) |
-| `npm run build`      | Compile TypeScript to `dist/`     |
-| `npm start`          | Run the compiled service          |
-| `npm test`           | Run the test suite once           |
-| `npm run test:watch` | Run tests in watch mode           |
-| `npm run typecheck`  | Type-check without emitting       |
-| `npm run lint`       | ESLint                            |
-| `npm run format`     | Prettier                          |
+Then open **<http://localhost:3000>** for the dashboard.
+
+Nothing has been triaged yet, so it will be empty. To fill it with realistic
+conversations — **no Intercom account, no API keys, no network**:
+
+```bash
+npm run seed
+```
+
+That works because `.env.example` ships with `AI_PROVIDER=mock`: a deterministic
+offline classifier stands in for Claude, and the seed script signs its own
+webhooks. See [Running with no credentials](#running-with-no-credentials).
+
+| Script                      | What it does                                                                                                                                         |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run dev`               | Run with hot reload (`tsx watch`)                                                                                                                    |
+| `npm run build`             | Compile TypeScript to `dist/`                                                                                                                        |
+| `npm start`                 | Run the compiled service                                                                                                                             |
+| `npm test`                  | Run the test suite once                                                                                                                              |
+| `npm run test:watch`        | Run tests in watch mode                                                                                                                              |
+| `npm run typecheck`         | Type-check without emitting                                                                                                                          |
+| `npm run lint`              | ESLint                                                                                                                                               |
+| `npm run format`            | Prettier                                                                                                                                             |
+| `npm run inspect -- <file>` | Dry-run a real Intercom payload: what would be extracted, what the model would see, what each sink would get. No network, no credentials, no AI call |
+| `npm run replay -- <file>`  | Sign a payload and POST it to a running instance                                                                                                     |
+| `npm run seed`              | Fill a running instance with 11 realistic conversations. No credentials needed                                                                       |
 
 ---
 
@@ -87,9 +108,11 @@ values.
 | Variable                    | Required                         | Default         | Purpose                                                                           |
 | --------------------------- | -------------------------------- | --------------- | --------------------------------------------------------------------------------- |
 | `INTERCOM_CLIENT_SECRET`    | **yes**                          | —               | Verifies the `X-Hub-Signature` on incoming webhooks                               |
-| `SLACK_WEBHOOK_URL`         | **yes**                          | —               | Slack Incoming Webhook to post to                                                 |
+| `SLACK_WEBHOOK_URL`         | no                               | —               | Set only if you also want Slack notifications                                     |
+| `DASHBOARD_TOKEN`           | no                               | —               | Shared secret gating the dashboard. Unset = open. Minimum 16 chars                |
+| `DASHBOARD_MAX_RECORDS`     | no                               | `200`           | How many recent conversations the dashboard keeps (in memory)                     |
 | `AI_API_KEY`                | yes when `AI_PROVIDER=anthropic` | —               | Anthropic API key                                                                 |
-| `AI_PROVIDER`               | no                               | `anthropic`     | `anthropic` or `noop`                                                             |
+| `AI_PROVIDER`               | no                               | `anthropic`     | `anthropic`, `mock`, or `noop`                                                    |
 | `AI_MODEL`                  | no                               | `claude-opus-5` | Model used for triage                                                             |
 | `AI_EFFORT`                 | no                               | `low`           | `low`…`max`. Triage is a simple classification; `low` keeps cost and latency down |
 | `AI_TIMEOUT_MS`             | no                               | `30000`         | Per-request model timeout                                                         |
@@ -105,17 +128,227 @@ Notes:
 - **`INTERCOM_ACCESS_TOKEN` is not used in V1.** The webhook payload already
   contains the customer's message, so the service makes no Intercom API calls at
   all. It is listed here because V2 will need it.
-- **`SLACK_WEBHOOK_URL` must point at `https://hooks.slack.com/`** by default.
+- **The dashboard is always on and needs no configuration.** Slack is opt-in.
+- **`SLACK_WEBHOOK_URL`, when set, must point at `https://hooks.slack.com/`** by default.
   This is a guard against a misconfigured deploy shipping customer messages to
   an arbitrary host. Set `SLACK_ALLOW_NON_SLACK_URL=true` to point at a local
   mock during development.
-- **`AI_PROVIDER=noop`** disables the model entirely. Every request then produces
-  an explicitly `UNCLASSIFIED` Slack notification. Useful for verifying the
-  Intercom → Slack wiring before AI credentials exist.
+- **`AI_PROVIDER=mock`** swaps Claude for offline keyword matching — no key, no
+  network, no spend. Local development only; see
+  [Running with no credentials](#running-with-no-credentials).
+- **`AI_PROVIDER=noop`** disables the model entirely. Every request then shows as
+  explicitly `Unclassified`. Useful for verifying the Intercom wiring before AI
+  credentials exist.
+- **`DASHBOARD_TOKEN`** — the dashboard serves customer messages verbatim. Unset
+  is fine on localhost; set it for anything else. See
+  [The dashboard](#the-dashboard).
 - Blank values are treated as absent, so an empty line in `.env` fails loudly
   rather than silently passing an empty string through.
 
 Never commit `.env`. `.gitignore` already excludes it.
+
+---
+
+## Running with no credentials
+
+The whole pipeline runs offline — no Intercom account, no Anthropic key, no
+Slack workspace, no network:
+
+```bash
+npm run dev      # terminal A
+npm run seed     # terminal B
+```
+
+Open <http://localhost:3000>.
+
+Two pieces make that work.
+
+### `AI_PROVIDER=mock`
+
+A deterministic keyword classifier implementing the same `TriageProvider`
+interface as the Claude provider. It scores the message against per-category
+keyword sets, escalates on signals like "outage" or "cannot", and returns a
+schema-valid `TriageResult`.
+
+> **It is not AI.** It has no understanding of the message and will be
+> confidently wrong on anything subtle. Every result carries
+> `MOCK CLASSIFIER (no AI was called)` in its reasoning summary, and the service
+> logs `startup.triage_mocked` at `warn` when it is selected. Never use it
+> outside local development.
+
+Switch to the real thing with `AI_PROVIDER=anthropic` and `AI_API_KEY`.
+
+### `npm run seed`
+
+Posts 11 invented .box support conversations — DNS outage, duplicate charge,
+stuck registration, account lockout, suspected compromise, abuse report, feature
+request, a general question, a reply in an existing thread, and a
+prompt-injection attempt — as properly signed Intercom webhook envelopes.
+
+It signs with whatever `INTERCOM_CLIENT_SECRET` is in `.env`, so the real
+signature-verification path is still exercised. For local use any value works;
+it only has to match what the service loaded.
+
+```bash
+npm run seed                 # all of them
+npm run seed -- --count 3    # just the first three
+```
+
+Event ids are unique per run, so re-seeding adds fresh records rather than being
+rejected as duplicates.
+
+---
+
+## The dashboard
+
+`GET /` serves a single-page dashboard of every conversation the service has
+triaged. It needs no configuration and no external service — it is the default
+destination for triage results.
+
+It shows priority, category, AI confidence, the customer, their message
+verbatim, the AI summary and assessment, the suggested draft reply, a link into
+Intercom, and the conversation's timeline. Filters cover priority, category,
+free-text search, and "action required only". It polls every 5 seconds and can
+be paused.
+
+### Correcting the classifier
+
+Every card has a **Reclassify** control: pick a category and priority, save. The
+change applies immediately and the list, filters and counts all follow it.
+
+**A correction is recorded, not applied over the top.** The model's original
+answer stays on the record and the card shows both:
+
+```
+DNS  HIGH  [CORRECTED]
+AI originally said: Billing / medium (64% confidence)
+```
+
+That is the whole point of V1. The open question is "how good is this
+classifier", and it becomes unanswerable if a correction erases what the model
+said. The `override` lives alongside `result`; reads go through
+`effectiveCategory()` / `effectivePriority()` in `src/domain/triageRecord.ts`,
+which prefer the human.
+
+A **Corrected** tile in the stats row is your running error count. Confidence is
+hidden on a corrected card — it described an answer that has since been
+overruled.
+
+You can also classify a record the model failed on entirely: correcting an
+`Unclassified` card gives it labels.
+
+#### The API
+
+```bash
+curl -X PATCH http://localhost:3000/api/requests/<eventId> \
+  -H 'content-type: application/json' \
+  -d '{"category":"not_support","priority":"low"}'
+```
+
+Both fields are optional; at least one is required. Successive corrections merge,
+so fixing the priority later does not discard an earlier category fix. Unknown
+category or priority values are rejected with `400`. An event the ring buffer has
+already forgotten returns `404`.
+
+#### Writes are authenticated differently from reads
+
+When `DASHBOARD_TOKEN` is set, reads accept the token as `?token=…` **or** a
+bearer header. Writes accept **only** the bearer header.
+
+A query parameter travels in links, bookmarks and browser history, so a
+URL-authenticated write could be triggered by anything that gets someone to
+follow a link. Requiring a header means a cross-origin page cannot forge the
+request without a CORS preflight it will not be granted. There is a test
+asserting `?token=` is rejected on `PATCH`.
+
+#### Corrections are not attributed, and not durable
+
+There is **no author recorded**. The dashboard authenticates with a shared token,
+not per-person credentials, so there is no identity to record and inventing one
+would be worse than leaving it out.
+
+Corrections live in the same in-memory ring buffer as everything else, so they
+are **lost on restart**. If you are running an evaluation, export before you
+redeploy:
+
+```bash
+curl -s http://localhost:3000/api/requests > corrections-$(date +%F).json
+```
+
+Each correction is also logged as `dashboard.reclassified` with the from/to
+labels and no message text, so a log collector gives you a durable trail even
+though the dashboard itself does not.
+
+### Sorting
+
+Sort by any of four timestamps, ascending or descending:
+
+| Sort by             | Field                   | What it means                                |
+| ------------------- | ----------------------- | -------------------------------------------- |
+| Priority            | `priority`              | Urgency, ranked low → critical               |
+| Triaged             | `processedAt`           | When this service classified it. The default |
+| Message received    | `createdAt`             | When the customer sent _this_ message        |
+| Conversation opened | `conversationCreatedAt` | When the thread started                      |
+| Last response       | `lastResponseAt`        | When .box last replied                       |
+
+These differ more than they look. On a reply, the conversation may have opened
+days before the message arrived, and the last response sits between them.
+
+Priority sorts by rank, not alphabetically — `low` → `medium` → `high` →
+`critical`. Because there are only four values, ties are the norm, so records at
+the same priority fall back to most-recently-triaged first. The direction button
+relabels itself per key: "Newest/Oldest first" for dates, "Highest/Lowest first"
+for priority. Sorting follows human corrections, so a card you reclassified to
+`critical` moves to the top.
+
+Records missing the selected value sort **last in both directions** — "nobody has
+ever replied to this" is a real state, not a zero timestamp. Sorting by last
+response ascending therefore surfaces the conversations that have gone longest
+without an answer, with the never-answered ones grouped at the end.
+
+`lastResponseAt` counts only teammate messages that actually went to the
+customer. Internal notes and assignment events are bookkeeping, not responses,
+and are ignored.
+
+Requests that failed triage appear as **Unclassified** with the reason, so a
+classifier outage is visible rather than silent.
+
+`GET /api/requests` returns the same data as JSON (`{ stats, records }`), if you
+want to pull it somewhere else.
+
+### It has no authentication by default
+
+The dashboard serves customer support messages verbatim. On localhost that is
+fine. Anywhere else it is a data leak.
+
+Set `DASHBOARD_TOKEN` (16+ characters) to require a shared secret:
+
+```bash
+DASHBOARD_TOKEN=$(openssl rand -hex 24)
+```
+
+Then open `http://<host>/?token=<token>` once. The page keeps the token for that
+browser tab and strips it from the address bar, so it does not end up in
+screenshots or history. The API also accepts `Authorization: Bearer <token>`.
+
+The service logs `startup.dashboard_unprotected` at `warn` if it starts with
+`NODE_ENV=production` and no token set.
+
+This is a shared secret, not real authentication. It is appropriate for an
+internal tool on localhost or behind a VPN. It is not a substitute for SSO on a
+public endpoint.
+
+### The history is not durable
+
+Records live in a bounded in-memory ring buffer (`DASHBOARD_MAX_RECORDS`,
+default 200). They are **lost on restart, redeploy, or crash**, and are not
+shared between instances.
+
+That is deliberate: the dashboard exists so humans can evaluate the classifier
+against live traffic, not to be an audit log. Intercom remains the system of
+record for the conversations themselves. If triage history needs to survive a
+deploy, implement `TriageRecordStore` against SQLite, Postgres, or a KV store —
+it is one interface with four methods.
 
 ---
 
@@ -168,10 +401,13 @@ Slack work precisely so this budget is never the constraint — see
 
 ---
 
-## Slack setup
+## Slack setup (optional)
 
-V1 uses an **Incoming Webhook**, not a full Slack bot app. No OAuth flow, no bot
-token, no scopes to manage.
+**Skip this unless you want notifications in Slack as well as on the dashboard.**
+With `SLACK_WEBHOOK_URL` unset, the service runs dashboard-only.
+
+If you do want it: V1 uses an **Incoming Webhook**, not a full Slack bot app. No
+OAuth flow, no bot token, no scopes to manage.
 
 1. Go to <https://api.slack.com/apps> → your app (or **Create New App**).
 2. **Incoming Webhooks** → toggle **Activate Incoming Webhooks** on.
@@ -335,12 +571,14 @@ LOG_LEVEL=info npm run dev
 LOG_LEVEL=debug npm run dev
 ```
 
+The dashboard at <http://localhost:3000> updates within 5 seconds.
+
 A successful request logs, in order:
 
 ```
 webhook.accepted    eventId, topic, conversationId
 triage.classified   category, priority, actionRequired, confidence
-pipeline.notified   outcome=classified
+pipeline.notified   outcome=classified, sink=dashboard
 ```
 
 ---
@@ -367,6 +605,9 @@ Coverage of the required cases:
 | AI result schema validation             | `tests/triage/schema.test.ts`                                            |
 | Prompt-injection message stays data     | `tests/triage/prompt.test.ts`, `anthropicProvider.test.ts`               |
 | Slack formatting                        | `tests/notifications/formatting.test.ts`                                 |
+| Dashboard store, stats and eviction     | `tests/dashboard/store.test.ts`                                          |
+| Dashboard routes, auth and XSS safety   | `tests/dashboard/routes.test.ts`                                         |
+| Sink fan-out and failure isolation      | `tests/notifications/fanOut.test.ts`                                     |
 | Duplicate event handling                | `tests/intercom/webhook.test.ts`, `tests/store/memoryEventStore.test.ts` |
 | AI provider failure                     | `tests/triage/anthropicProvider.test.ts`, `tests/pipeline.test.ts`       |
 | Slack failure                           | `tests/notifications/slack.test.ts`, `tests/pipeline.test.ts`            |
@@ -436,8 +677,8 @@ replicas can each deliver the same alert.
 
 - `GET /health` returns `{"status":"ok"}` — use it as liveness and readiness.
 - Logs are single-line JSON on stdout/stderr. Ship them as-is.
-- Alert on `pipeline.slack_failed` — that log line means a customer request
-  produced no notification.
+- Alert on `sink.failed` (one sink broke) and `pipeline.notify_failed` (every
+  sink broke — the request reached nothing).
 - Watch the rate of `triage.degraded`; a sustained rise means the model path is
   unhealthy.
 
@@ -467,13 +708,22 @@ src/
     prompt.ts                  System prompt and untrusted-content envelope.
     anthropicProvider.ts       Claude implementation of TriageProvider.
 
+  dashboard/                   ── dashboard boundary ──
+    page.ts                    The HTML page (no build step, no deps).
+    routes.ts                  GET / and GET /api/requests, token gate.
+    store.ts                   TriageRecordStore + in-memory ring buffer.
+    sink.ts                    Dashboard implementation of NotificationSink.
+
   notifications/               ── Slack boundary ──
     formatting.ts              Block Kit construction (pure).
     slack.ts                   Incoming Webhook delivery.
+    slackSink.ts               Slack implementation of NotificationSink.
+    fanOut.ts                  Delivers one record to every sink, isolating failures.
 
   domain/                      ── business types, no vendor imports ──
     supportRequest.ts          SupportRequest.
     triage.ts                  TriageProvider, TriageResult, TriageError.
+    triageRecord.ts            TriageRecord + NotificationSink.
     eventStore.ts              EventStore + claimEvent().
 
   store/memoryEventStore.ts    In-memory EventStore (see caveats).
@@ -486,8 +736,34 @@ Four regions, each depending only on `domain/`:
 
 1. **Intercom** knows the webhook payload shape. Nothing else does.
 2. **Triage** knows Claude. Nothing else does.
-3. **Slack** knows Block Kit. Nothing else does.
+3. **Sinks** (dashboard, Slack) know their own presentation. Nothing else does.
 4. **Domain** knows none of them.
+
+The pipeline does no formatting. It produces a `TriageRecord` — request, result
+(or null), degraded reason, timestamp — and hands it to a `NotificationSink`.
+Adding a destination is one file implementing one method:
+
+The record a sink receives:
+
+```ts
+type TriageRecord = {
+  request: SupportRequest;
+  result: TriageResult | null; // null when triage failed
+  degradedReason: DegradedReason | null;
+  processedAt: string;
+  override?: TriageOverride | null; // a human correction, if any
+};
+```
+
+```ts
+interface NotificationSink {
+  readonly name: string;
+  notify(record: TriageRecord): Promise<void>;
+}
+```
+
+Failures are isolated per sink, so a Slack outage cannot stop a record reaching
+the dashboard.
 
 Everything is wired by dependency injection through `createApp(deps)`. There are
 no singletons, no module-level clients, and no hidden global state — which is
@@ -502,7 +778,9 @@ type SupportRequest = {
   messageId?: string;
   message: string; // plain text, HTML-stripped, capped at 4000 chars
   customer?: { id?: string; email?: string; name?: string };
-  createdAt?: string; // ISO-8601
+  createdAt?: string; // when this message was sent
+  conversationCreatedAt?: string; // when the conversation was opened
+  lastResponseAt?: string; // when .box last replied; absent = never
   intercomUrl?: string;
 };
 ```
@@ -523,6 +801,8 @@ type TriageResult = {
     | "security"
     | "abuse"
     | "general"
+    | "not_support"
+    | "misdirected"
     | "other";
   priority: "low" | "medium" | "high" | "critical";
   actionRequired: boolean;
@@ -543,6 +823,38 @@ own stricter validation of what came back — enums, bounds, lengths. The model 
 an untrusted producer like any other. Out-of-range confidence is clamped rather
 than rejected; an unknown category is rejected.
 
+### Filtering inbox noise
+
+Not everything that reaches the support inbox is a customer asking for help. Two
+categories exist for that, and the prompt (`src/triage/prompt.ts`) describes the
+known patterns:
+
+| Category      | What it is                                                                                                                                                              | Priority | Action needed                          |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | -------------------------------------- |
+| `not_support` | Automated notifications, vendor and partner mail, newsletters, out-of-office. Pipedrive CRM notifications and routine CentralNic correspondence are the named examples. | low      | no                                     |
+| `misdirected` | A real person, wrong company. Overwhelmingly people looking for their telephone or internet provider — the Vodafone EasyBox router in Germany is the common case.       | low      | **yes** — one short redirect closes it |
+
+Three things this deliberately gets right:
+
+- **A CentralNic incident is not noise.** CentralNic is a registry partner, so
+  routine mail from them is `not_support` — but the prompt carves out an
+  explicit exception: anything describing an outage, suspension, policy action,
+  abuse complaint, or security issue is classified on its actual content, at
+  whatever priority that content deserves, up to critical. When in doubt, the
+  model is instructed to treat it as _not_ routine. Filtering partner mail must
+  never be able to hide a registry outage.
+- **Mentioning a vendor is not the same as being from one.** "Your API broke my
+  Pipedrive integration" is a `technical_issue`, and the prompt says so directly.
+- **Misdirected people still get an answer.** These are marked
+  `actionRequired: true` despite being low priority, and the model is told to
+  draft the redirect _in the language the customer wrote in_, and never to invent
+  a support phone number for a provider it cannot identify.
+
+**Nothing is dropped.** These are labels, not filters — V1 still records every
+message, and they appear in the dashboard list alongside everything else. Use
+the category filter to narrow to them, or ignore them. The pipeline suppression
+switch stays off in V1.
+
 ### Why nothing is filtered in V1
 
 The pipeline deliberately does **not** contain:
@@ -556,6 +868,28 @@ classifier thinks need no action. The point of V1 is for humans to evaluate the
 classifier's judgement against real traffic before it is trusted to suppress
 anything. Turning on suppression is a one-line change in `src/pipeline.ts` once
 that evaluation says it is safe.
+
+---
+
+### Editing the classifier
+
+The prompt is one constant: `SYSTEM_PROMPT` in `src/triage/prompt.ts`. Category
+definitions are at the `## Categories` heading, priority rules under
+`## Priority guidance`, and the non-support patterns under
+`## Messages that are not support requests`.
+
+Adding or renaming a category means editing **two** files:
+
+1. `src/triage/prompt.ts` — the definition the model reads
+2. `src/triage/schema.ts` — `TRIAGE_CATEGORIES`, which validates what comes back
+
+Change one without the other and every classification fails validation and
+degrades to `Unclassified`. TypeScript will catch the display side for you:
+`CATEGORY_LABEL` in `src/notifications/formatting.ts` and `BASE_PRIORITY` /
+`SUGGESTED` in `src/triage/mockProvider.ts` are exhaustive `Record`s and will not
+compile until the new category is handled. The dashboard's label map in
+`src/dashboard/page.ts` is plain JavaScript inside a template string, so it is
+the one place the compiler cannot help — update it by hand.
 
 ---
 
@@ -580,13 +914,13 @@ actually help.**
 | No usable customer message      | `200 skipped`   | Nothing to triage                                                  |
 | Accepted                        | `202 accepted`  | Queued; processing continues after the response                    |
 | **AI failure**                  | _already `202`_ | Happens after the response. A degraded Slack alert is sent instead |
-| **Slack failure**               | _already `202`_ | Happens after the response. Logged as `pipeline.slack_failed`      |
+| **Sink failure**                | _already `202`_ | Happens after the response. Logged as `sink.failed` per sink       |
 | Unexpected exception in a route | `500`           | Genuine bug; a retry may succeed                                   |
 
 **The explicit tradeoff:** a Slack outage means notifications are _lost_, not
 delayed. There is no retry and no dead-letter queue, because both need durable
 storage that V1 deliberately does not have. The failure is loud in the logs
-(`pipeline.slack_failed` at `error` level) and should be alerted on. If losing
+(`sink.failed` at `error` level) and should be alerted on. If losing
 notifications during a Slack outage is unacceptable, the fix is a real queue —
 not a `500`, which would only trade lost alerts for duplicated ones.
 
@@ -724,10 +1058,12 @@ Stated plainly, because some of these matter operationally:
 
 1. **Idempotency is not durable.** See [Idempotency](#idempotency). Single
    instance only, unless you swap the store.
-2. **No retry for Slack failures.** A Slack outage loses notifications. Alert on
-   `pipeline.slack_failed`.
-3. **No persistence at all.** No record of what was classified or notified. Logs
-   are the only history.
+2. **No retry for sink failures.** A Slack outage loses those notifications
+   (the dashboard still has the record). Alert on `sink.failed`.
+3. **Dashboard history is in-memory and unauthenticated by default.** Lost on
+   restart, not shared between instances, and readable by anyone who can reach
+   the service unless `DASHBOARD_TOKEN` is set. See
+   [The dashboard](#the-dashboard).
 4. **Intercom's conversation payload shape is not officially published.**
    Intercom documents the notification envelope but not a complete conversation
    example, and the shape differs between API versions. The parser is therefore
@@ -751,11 +1087,13 @@ Stated plainly, because some of these matter operationally:
 
 1. Run for a week with notifications on everything, and have support rate the
    classifications. That data is the prerequisite for every other change here.
-2. Add a durable `EventStore` before scaling past one instance.
-3. Alert on `pipeline.slack_failed` and on the `triage.degraded` rate.
-4. Verify the parser against real payloads from your workspace, especially
+2. Set `DASHBOARD_TOKEN` before the dashboard is reachable by anyone but you.
+3. Add a durable `EventStore` before scaling past one instance, and a durable
+   `TriageRecordStore` if the triage history needs to survive a deploy.
+4. Alert on `sink.failed` and on the `triage.degraded` rate.
+5. Verify the parser against real payloads from your workspace, especially
    `conversation.user.replied`.
-5. Once accuracy is measured, decide whether to enable `actionRequired`
+6. Once accuracy is measured, decide whether to enable `actionRequired`
    filtering — and consider routing `critical` to a separate channel.
 
 ---

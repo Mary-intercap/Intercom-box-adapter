@@ -89,6 +89,14 @@ describe("triage result validation", () => {
     }
   });
 
+  it("accepts the non-support categories", () => {
+    for (const category of ["not_support", "misdirected"] as const) {
+      expect(() => toTriageResult({ ...validOutput, category, priority: "low" })).not.toThrow();
+    }
+    expect(TRIAGE_CATEGORIES).toContain("not_support");
+    expect(TRIAGE_CATEGORIES).toContain("misdirected");
+  });
+
   it("keeps the model-facing schema free of unsupported refinements", () => {
     // The model schema must stay plain; bounds belong in triageResultSchema.
     const parsed = modelOutputSchema.safeParse({ ...validOutput, confidence: 4 });

@@ -21,8 +21,21 @@ export type SupportRequest = {
     name?: string;
   };
 
-  /** ISO-8601. */
+  /**
+   * ISO-8601. When the message we are triaging was sent. For a reply this is
+   * the reply's timestamp, not the conversation's.
+   */
   createdAt?: string;
+
+  /** ISO-8601. When the conversation itself was opened. */
+  conversationCreatedAt?: string;
+
+  /**
+   * ISO-8601. When a teammate last replied, if ever. Absent means nobody from
+   * .box has answered this conversation yet - which is usually the interesting
+   * case to sort by.
+   */
+  lastResponseAt?: string;
 
   intercomUrl?: string;
 };

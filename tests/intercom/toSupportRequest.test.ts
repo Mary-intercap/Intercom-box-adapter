@@ -56,6 +56,7 @@ describe("toSupportRequest", () => {
       message: "My .box domain stopped resolving this morning.",
       customer: { id: "contact_777", name: "Alex Rivera", email: "customer@example.com" },
       createdAt: "2023-11-14T22:13:15.000Z",
+      conversationCreatedAt: "2023-11-14T22:13:10.000Z",
       intercomUrl: "https://app.intercom.com/a/apps/abc12345/conversations/conv_5001",
     });
   });
@@ -69,6 +70,58 @@ describe("toSupportRequest", () => {
     expect(result.request.messageId).toBe("part_2");
     expect(result.request.message).toBe("It is still failing.\nThe domain is example.box");
     expect(result.request.customer?.email).toBe("customer@example.com");
+  });
+
+  it("captures the three timestamps separately on a reply", () => {
+    const result = normalize(conversationRepliedPayload());
+    if (result.kind !== "ok") throw new Error("expected ok");
+
+    // The conversation opened before the reply arrived.
+    expect(result.request.conversationCreatedAt).toBe("2023-11-14T22:13:10.000Z");
+    // The customer's own latest message (part_2).
+    expect(result.request.createdAt).toBe("2023-11-14T22:18:20.000Z");
+    // The admin comment (part_1) is the last thing .box said.
+    expect(result.request.lastResponseAt).toBe("2023-11-14T22:15:00.000Z");
+  });
+
+  it("leaves lastResponseAt absent when nobody from .box has replied", () => {
+    const result = normalize(conversationCreatedPayload());
+    if (result.kind !== "ok") throw new Error("expected ok");
+    expect(result.request.lastResponseAt).toBeUndefined();
+  });
+
+  it("does not count internal notes or assignments as a response", () => {
+    const payload = conversationRepliedPayload();
+    const item = (payload.data as { item: Record<string, unknown> }).item;
+    item.conversation_parts = {
+      type: "conversation_part.list",
+      conversation_parts: [
+        {
+          id: "p1",
+          part_type: "note",
+          body: "<p>internal note, not a reply to the customer</p>",
+          created_at: 1_700_000_350,
+          author: { type: "admin", id: "admin_1" },
+        },
+        {
+          id: "p2",
+          part_type: "assignment",
+          body: null,
+          created_at: 1_700_000_360,
+          author: { type: "admin", id: "admin_1" },
+        },
+        {
+          id: "p3",
+          part_type: "comment",
+          body: "<p>still broken</p>",
+          created_at: 1_700_000_300,
+          author: { type: "user", id: "contact_777" },
+        },
+      ],
+    };
+    const result = normalize(payload);
+    if (result.kind !== "ok") throw new Error("expected ok");
+    expect(result.request.lastResponseAt).toBeUndefined();
   });
 
   it("strips HTML and decodes entities", () => {

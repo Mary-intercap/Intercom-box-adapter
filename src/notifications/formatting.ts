@@ -1,4 +1,5 @@
 import type { SupportRequest } from "../domain/supportRequest.js";
+import type { DegradedReason } from "../domain/triageRecord.js";
 import type { TriageResult } from "../triage/schema.js";
 import { truncate } from "../utils/text.js";
 
@@ -37,6 +38,8 @@ const CATEGORY_LABEL: Record<TriageResult["category"], string> = {
   security: "Security",
   abuse: "Abuse",
   general: "General",
+  not_support: "Not a support request",
+  misdirected: "Misdirected — wrong company",
   other: "Other",
 };
 
@@ -131,9 +134,6 @@ export function buildTriageMessage(request: SupportRequest, result: TriageResult
     blocks,
   };
 }
-
-export type DegradedReason =
-  "provider_error" | "invalid_output" | "refusal" | "timeout" | "not_configured";
 
 const DEGRADED_EXPLANATION: Record<DegradedReason, string> = {
   provider_error: "The AI provider returned an error.",

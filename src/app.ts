@@ -1,9 +1,12 @@
 import { Hono } from "hono";
 
+import { registerDashboardRoutes, type DashboardDeps } from "./dashboard/routes.js";
 import { createIntercomWebhookHandler, type WebhookDeps } from "./intercom/webhook.js";
 import { errorInfo } from "./utils/logger.js";
 
-export type AppDeps = WebhookDeps;
+export interface AppDeps extends WebhookDeps {
+  dashboard: DashboardDeps;
+}
 
 /**
  * Builds the HTTP surface.
@@ -18,6 +21,8 @@ export function createApp(deps: AppDeps): Hono {
   app.get("/health", (c) => c.json({ status: "ok" }));
 
   app.post("/webhooks/intercom", createIntercomWebhookHandler(deps));
+
+  registerDashboardRoutes(app, { logger: deps.logger, ...deps.dashboard });
 
   app.notFound((c) => c.json({ error: "not_found" }, 404));
 

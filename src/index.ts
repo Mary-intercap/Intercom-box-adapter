@@ -3,13 +3,19 @@ import { serve } from "@hono/node-server";
 import { createApp } from "./app.js";
 import { ConfigError, loadConfig, type Config } from "./config/env.js";
 import type { TriageProvider } from "./domain/triage.js";
+import { createDashboardSink } from "./dashboard/sink.js";
+import { createMemoryRecordStore } from "./dashboard/store.js";
+import type { NotificationSink } from "./domain/triageRecord.js";
+import { createFanOutSink } from "./notifications/fanOut.js";
 import { createSlackWebhookNotifier } from "./notifications/slack.js";
+import { createSlackSink } from "./notifications/slackSink.js";
 import { backgroundDefer } from "./runtime.js";
 import { createMemoryEventStore } from "./store/memoryEventStore.js";
 import {
   createAnthropicTriageProvider,
   createNoopTriageProvider,
 } from "./triage/anthropicProvider.js";
+import { createMockTriageProvider } from "./triage/mockProvider.js";
 import { createLogger, type Logger } from "./utils/logger.js";
 
 /**
@@ -26,6 +32,13 @@ function buildTriageProvider(config: Config, logger: Logger): TriageProvider {
       detail: "AI_PROVIDER=noop - all requests will produce UNCLASSIFIED notifications",
     });
     return createNoopTriageProvider();
+  }
+  if (config.AI_PROVIDER === "mock") {
+    logger.warn("startup.triage_mocked", {
+      detail:
+        "AI_PROVIDER=mock - classifications are keyword matching, NOT AI. Never use this outside local development.",
+    });
+    return createMockTriageProvider();
   }
   return createAnthropicTriageProvider({
     // Guaranteed present: config validation requires it for this provider.
@@ -58,14 +71,36 @@ function main(): void {
     });
   }
 
+  // The dashboard is always on: it is the one sink that cannot fail, so the
+  // service can always show what it did even when every outbound integration
+  // is down. Slack is added only when a webhook URL is configured.
+  const recordStore = createMemoryRecordStore({ maxRecords: config.DASHBOARD_MAX_RECORDS });
+  const sinks: NotificationSink[] = [createDashboardSink(recordStore)];
+
+  if (config.SLACK_WEBHOOK_URL) {
+    sinks.push(
+      createSlackSink(
+        createSlackWebhookNotifier({
+          webhookUrl: config.SLACK_WEBHOOK_URL,
+          timeoutMs: config.SLACK_TIMEOUT_MS,
+        }),
+      ),
+    );
+  }
+
+  if (!config.DASHBOARD_TOKEN && config.NODE_ENV === "production") {
+    logger.warn("startup.dashboard_unprotected", {
+      detail:
+        "DASHBOARD_TOKEN is not set - the dashboard exposes customer messages to anyone who can reach this service",
+    });
+  }
+
   const app = createApp({
     clientSecret: config.INTERCOM_CLIENT_SECRET,
     eventStore: createMemoryEventStore(),
     triage: buildTriageProvider(config, logger),
-    slack: createSlackWebhookNotifier({
-      webhookUrl: config.SLACK_WEBHOOK_URL,
-      timeoutMs: config.SLACK_TIMEOUT_MS,
-    }),
+    sink: createFanOutSink(sinks, logger),
+    dashboard: { store: recordStore, token: config.DASHBOARD_TOKEN },
     defer: backgroundDefer,
     logger,
   });
@@ -77,6 +112,8 @@ function main(): void {
       aiProvider: config.AI_PROVIDER,
       aiModel: config.AI_PROVIDER === "anthropic" ? config.AI_MODEL : null,
       logLevel: config.LOG_LEVEL,
+      sinks: sinks.map((sink) => sink.name),
+      dashboardProtected: Boolean(config.DASHBOARD_TOKEN),
     });
   });
 

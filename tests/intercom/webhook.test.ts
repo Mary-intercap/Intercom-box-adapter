@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createApp } from "../../src/app.js";
 import { TriageError } from "../../src/domain/triage.js";
 import { signPayload } from "../../src/intercom/verifySignature.js";
-import { failingSlack, failingTriage, testDeps } from "../fixtures/deps.js";
+import { failingSink, failingTriage, testDeps } from "../fixtures/deps.js";
 import {
   conversationCreatedPayload,
   conversationRepliedPayload,
@@ -37,8 +37,8 @@ describe("POST /webhooks/intercom", () => {
       status: "accepted",
       eventId: "notif_created_001",
     });
-    expect(deps.slackRecorder.sent).toHaveLength(1);
-    expect(deps.slackRecorder.sent[0]?.text).toContain("HIGH");
+    expect(deps.sinkRecorder.sent).toHaveLength(1);
+    expect(deps.sinkRecorder.sent[0]?.result?.priority).toBe("high");
   });
 
   it("accepts a sha256 signature", async () => {
@@ -62,7 +62,7 @@ describe("POST /webhooks/intercom", () => {
 
     expect(response.status).toBe(401);
     await expect(response.json()).resolves.toEqual({ error: "invalid_signature" });
-    expect(deps.slackRecorder.sent).toHaveLength(0);
+    expect(deps.sinkRecorder.sent).toHaveLength(0);
   });
 
   it("rejects a missing signature with 401", async () => {
@@ -71,7 +71,7 @@ describe("POST /webhooks/intercom", () => {
       "content-type": "application/json",
     });
     expect(response.status).toBe(401);
-    expect(deps.slackRecorder.sent).toHaveLength(0);
+    expect(deps.sinkRecorder.sent).toHaveLength(0);
   });
 
   it("does not leak the rejection reason to the caller", async () => {
@@ -94,7 +94,7 @@ describe("POST /webhooks/intercom", () => {
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({ error: "invalid_payload" });
-    expect(deps.slackRecorder.sent).toHaveLength(0);
+    expect(deps.sinkRecorder.sent).toHaveLength(0);
   });
 
   it("returns 400 for a signed payload that is not a notification envelope", async () => {
@@ -102,7 +102,7 @@ describe("POST /webhooks/intercom", () => {
     const { body, headers } = signedRequest({ hello: "world" });
     const response = await post(createApp(deps), body, headers);
     expect(response.status).toBe(400);
-    expect(deps.slackRecorder.sent).toHaveLength(0);
+    expect(deps.sinkRecorder.sent).toHaveLength(0);
   });
 
   it("acknowledges unsupported topics with 200 and no work", async () => {
@@ -116,7 +116,7 @@ describe("POST /webhooks/intercom", () => {
       status: "ignored",
       reason: "unsupported_topic",
     });
-    expect(deps.slackRecorder.sent).toHaveLength(0);
+    expect(deps.sinkRecorder.sent).toHaveLength(0);
   });
 
   it("processes a duplicate event exactly once", async () => {
@@ -130,7 +130,7 @@ describe("POST /webhooks/intercom", () => {
     expect(first.status).toBe(202);
     expect(second.status).toBe(200);
     await expect(second.json()).resolves.toEqual({ status: "duplicate" });
-    expect(deps.slackRecorder.sent).toHaveLength(1);
+    expect(deps.sinkRecorder.sent).toHaveLength(1);
   });
 
   it("deduplicates concurrent deliveries of the same event", async () => {
@@ -145,7 +145,7 @@ describe("POST /webhooks/intercom", () => {
     ]);
 
     expect(responses.filter((r) => r.status === 202)).toHaveLength(1);
-    expect(deps.slackRecorder.sent).toHaveLength(1);
+    expect(deps.sinkRecorder.sent).toHaveLength(1);
   });
 
   it("acknowledges an event with no customer message without notifying", async () => {
@@ -159,7 +159,7 @@ describe("POST /webhooks/intercom", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ status: "skipped" });
-    expect(deps.slackRecorder.sent).toHaveLength(0);
+    expect(deps.sinkRecorder.sent).toHaveLength(0);
   });
 
   it("still returns 202 when the AI provider fails, and sends a degraded alert", async () => {
@@ -172,18 +172,19 @@ describe("POST /webhooks/intercom", () => {
 
     // Never a 500: a 500 would earn an Intercom retry and a duplicate alert.
     expect(response.status).toBe(202);
-    expect(deps.slackRecorder.sent).toHaveLength(1);
-    expect(deps.slackRecorder.sent[0]?.text).toContain("UNCLASSIFIED");
+    expect(deps.sinkRecorder.sent).toHaveLength(1);
+    expect(deps.sinkRecorder.sent[0]?.result).toBeNull();
+    expect(deps.sinkRecorder.sent[0]?.degradedReason).toBe("provider_error");
   });
 
-  it("still returns 202 when Slack fails", async () => {
-    const deps = testDeps({ slack: failingSlack(new Error("slack down")) });
+  it("still returns 202 when every notification sink fails", async () => {
+    const deps = testDeps({ sink: failingSink(new Error("slack down")) });
     const { body, headers } = signedRequest(conversationCreatedPayload());
 
     const response = await post(createApp(deps), body, headers);
 
     expect(response.status).toBe(202);
-    expect(deps.records.some((r) => r.msg === "pipeline.slack_failed")).toBe(true);
+    expect(deps.records.some((r) => r.msg === "pipeline.notify_failed")).toBe(true);
   });
 
   it("returns 413 for an oversized body before verifying anything", async () => {

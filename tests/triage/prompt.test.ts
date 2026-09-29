@@ -43,6 +43,31 @@ describe("system prompt", () => {
     expect(SYSTEM_PROMPT).toMatch(/Do not expose step-by-step reasoning/i);
   });
 
+  it("defines the non-support categories and their known patterns", () => {
+    expect(SYSTEM_PROMPT).toContain('"not_support"');
+    expect(SYSTEM_PROMPT).toContain('"misdirected"');
+    expect(SYSTEM_PROMPT).toContain("Pipedrive");
+    expect(SYSTEM_PROMPT).toContain("CentralNic");
+    expect(SYSTEM_PROMPT).toContain("EasyBox");
+    expect(SYSTEM_PROMPT).toContain("192.168.2.1");
+  });
+
+  it("carves out the CentralNic incident exception", () => {
+    // Filtering routine partner mail must never hide a registry incident.
+    expect(SYSTEM_PROMPT).toContain("IMPORTANT EXCEPTION");
+    expect(SYSTEM_PROMPT).toMatch(/registry incident/i);
+    expect(SYSTEM_PROMPT).toMatch(/treat it as NOT routine/i);
+  });
+
+  it("protects genuine issues that merely mention a vendor", () => {
+    expect(SYSTEM_PROMPT).toMatch(/Do NOT use this for a message that merely mentions Pipedrive/i);
+  });
+
+  it("tells the model to reply in the customer's language and not invent numbers", () => {
+    expect(SYSTEM_PROMPT).toMatch(/If they wrote in German, reply in German/i);
+    expect(SYSTEM_PROMPT).toMatch(/Never invent a contact number/i);
+  });
+
   it("contains the priority guidance", () => {
     for (const level of ["CRITICAL", "HIGH", "MEDIUM", "LOW"]) {
       expect(SYSTEM_PROMPT).toContain(level);
